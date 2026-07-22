@@ -143,7 +143,8 @@ jobs:
               env:
                   NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               run: |
+                  # --tag is required because the version is a prerelease (…-foa.N).
                   for t in linux-x64-gnu darwin-arm64 win32-x64-msvc; do
-                      (cd "npm/$t" && npm publish --access restricted)
+                      (cd "npm/$t" && npm publish --access restricted --tag foa)
                   done
-                  npm publish --access restricted
+                  npm publish --access restricted --tag foa
