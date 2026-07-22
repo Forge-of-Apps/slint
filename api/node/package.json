@@ -1,13 +1,16 @@
 {
-  "name": "slint-ui",
-  "version": "1.17.1",
+  "name": "@forge-of-apps/slint-ui",
+  "version": "1.17.1-foa.1",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "homepage": "https://github.com/slint-ui/slint",
+  "homepage": "https://github.com/Forge-of-Apps/slint",
   "license": "SEE LICENSE IN LICENSE.md",
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
   "repository": {
     "type": "git",
-    "url": "https://github.com/slint-ui/slint"
+    "url": "https://github.com/Forge-of-Apps/slint"
   },
   "keywords": [
     "GUI",

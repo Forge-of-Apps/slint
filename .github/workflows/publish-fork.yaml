@@ -1,0 +1,156 @@
+# Build the native napi binaries for the platforms the goose desktop app ships
+# and publish @forge-of-apps/slint-ui (+ its per-platform binary packages) to the
+# org's GitHub Packages npm registry. This is a fork-only workflow used until the
+# layout/CapsLock shortcut fix lands upstream; it deliberately avoids Slint's
+# npmjs-oriented packaging.mts / xtask flow (hardcoded names, dev binary, OIDC).
+name: Publish fork to GitHub Packages
+
+on:
+    workflow_dispatch:
+        inputs:
+            publish:
+                type: boolean
+                default: true
+                description: "Publish to GitHub Packages (false = build only)"
+
+permissions:
+    contents: read
+    packages: write
+
+env:
+    CARGO_PROFILE_RELEASE_LTO: "fat"
+    CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "1"
+
+jobs:
+    build_binaries:
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    - os: ubuntu-22.04
+                      rust-target: x86_64-unknown-linux-gnu
+                      napi-target: linux-x64-gnu
+                    - os: macos-14
+                      rust-target: aarch64-apple-darwin
+                      napi-target: darwin-arm64
+                    - os: windows-2022
+                      rust-target: x86_64-pc-windows-msvc
+                      napi-target: win32-x64-msvc
+                      msvc-arch: x64
+        runs-on: ${{ matrix.os }}
+        env:
+            MACOSX_DEPLOYMENT_TARGET: "11.0"
+        steps:
+            - uses: actions/checkout@v6
+            - uses: ./.github/actions/install-linux-dependencies
+            - uses: ./.github/actions/install-skia-dependencies
+            - uses: ilammy/msvc-dev-cmd@v1
+              if: runner.os == 'Windows'
+              with:
+                  arch: ${{ matrix.msvc-arch }}
+            - uses: ./.github/actions/setup-rust
+              with:
+                  target: ${{ matrix.rust-target }}
+            - uses: pnpm/action-setup@v6.0.8
+              with:
+                  version: 10.29.3
+            - uses: actions/setup-node@v6
+              with:
+                  node-version: "24"
+                  package-manager-cache: false
+            - name: Build native binary
+              shell: bash
+              working-directory: api/node
+              run: |
+                  pnpm install --ignore-scripts
+                  pnpm exec napi build --platform --release \
+                      --target ${{ matrix.rust-target }} \
+                      --js rust-module.cjs --dts rust-module.d.cts \
+                      -c binaries.json
+                  ls -la slint-ui.*.node
+            - uses: actions/upload-artifact@v7
+              with:
+                  name: binary-${{ matrix.napi-target }}
+                  path: api/node/slint-ui.${{ matrix.napi-target }}.node
+                  if-no-files-found: error
+
+    publish:
+        needs: build_binaries
+        runs-on: ubuntu-22.04
+        steps:
+            - uses: actions/checkout@v6
+            - uses: ./.github/actions/install-linux-dependencies
+            - uses: ./.github/actions/install-skia-dependencies
+            - uses: ./.github/actions/setup-rust
+              with:
+                  target: x86_64-unknown-linux-gnu
+            - uses: pnpm/action-setup@v6.0.8
+              with:
+                  version: 10.29.3
+            - uses: actions/setup-node@v6
+              with:
+                  node-version: "24"
+                  registry-url: "https://npm.pkg.github.com"
+                  scope: "@forge-of-apps"
+                  package-manager-cache: false
+            - name: Generate JS loader + compiled dist
+              shell: bash
+              working-directory: api/node
+              run: |
+                  pnpm install --ignore-scripts
+                  # Regenerate the JS loader (rust-module.cjs) baked with the scoped
+                  # binary package name from binaries.json. The host .node produced
+                  # here is excluded from the package by .npmignore (*.node).
+                  pnpm exec napi build --platform --release \
+                      --target x86_64-unknown-linux-gnu \
+                      --js rust-module.cjs --dts rust-module.d.cts \
+                      -c binaries.json
+                  pnpm run compile
+            - name: Scaffold per-platform binary packages
+              shell: bash
+              working-directory: api/node
+              run: |
+                  pnpm exec napi create-npm-dirs --npm-dir . -c binaries.json
+                  ls -la npm/
+            - uses: actions/download-artifact@v8
+              with:
+                  path: api/node/dl
+            - name: Place binaries into their packages
+              shell: bash
+              working-directory: api/node
+              run: |
+                  version=$(node -p "require('./package.json').version")
+                  repo="git+https://github.com/Forge-of-Apps/slint.git"
+                  for t in linux-x64-gnu darwin-arm64 win32-x64-msvc; do
+                      cp "dl/binary-$t/slint-ui.$t.node" "npm/$t/"
+                      # GitHub Packages links each package to a repo for permissions;
+                      # ensure the generated platform package.json carries it.
+                      node -e '
+                        const fs=require("fs"), p="npm/'"$t"'/package.json";
+                        const j=JSON.parse(fs.readFileSync(p));
+                        j.repository={type:"git",url:"'"$repo"'"};
+                        j.publishConfig={registry:"https://npm.pkg.github.com"};
+                        fs.writeFileSync(p, JSON.stringify(j,null,2));'
+                      echo "== npm/$t/package.json =="; cat "npm/$t/package.json"
+                  done
+                  # Pin the main package's optionalDependencies to this version.
+                  node -e '
+                    const fs=require("fs"), p="package.json";
+                    const j=JSON.parse(fs.readFileSync(p));
+                    const v="'"$version"'";
+                    j.optionalDependencies=Object.assign({}, j.optionalDependencies, {
+                      "@forge-of-apps/slint-ui-binary-linux-x64-gnu": v,
+                      "@forge-of-apps/slint-ui-binary-darwin-arm64": v,
+                      "@forge-of-apps/slint-ui-binary-win32-x64-msvc": v});
+                    fs.writeFileSync(p, JSON.stringify(j,null,2));'
+            - name: Publish to GitHub Packages
+              if: ${{ github.event.inputs.publish != 'false' }}
+              shell: bash
+              working-directory: api/node
+              env:
+                  NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              run: |
+                  for t in linux-x64-gnu darwin-arm64 win32-x64-msvc; do
+                      (cd "npm/$t" && npm publish --access restricted)
+                  done
+                  npm publish --access restricted
