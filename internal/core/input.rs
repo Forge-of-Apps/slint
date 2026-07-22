@@ -945,6 +945,16 @@ pub struct InternalKeyEvent {
     pub key_event: KeyEvent,
     /// Indicates whether the key was pressed or released
     pub event_type: KeyEventType,
+    /// A layout-independent representation of the physical key, derived from
+    /// the key's position on a standard US QWERTY keyboard (e.g. the physical
+    /// "V" key yields "v" regardless of the active keyboard layout or CapsLock
+    /// state). It is used to resolve standard shortcuts such as Ctrl+V so they
+    /// keep working on non-Latin layouts and with CapsLock enabled.
+    ///
+    /// Empty when the backend cannot provide it (e.g. non-letter keys, or
+    /// backends without physical-key information); in that case `shortcut()`
+    /// falls back to `key_event.text`.
+    pub physical_key: SharedString,
     /// The key without any modifiers held
     /// Important on Windows, to distinguish between key presses when Ctrl+Alt was pressed
     /// vs. AltGr.
@@ -970,8 +980,20 @@ impl InternalKeyEvent {
     /// If a shortcut was pressed, this function returns `Some(StandardShortcut)`.
     /// Otherwise it returns None.
     pub fn shortcut(&self) -> Option<StandardShortcut> {
+        // Prefer the layout-independent character derived from the physical key
+        // position, so shortcuts like Ctrl+V resolve on non-Latin layouts. Fall
+        // back to the textual representation for backends that don't provide it.
+        // Lower-case the key so CapsLock (which upper-cases `text`) doesn't
+        // disable shortcuts.
+        let key = if self.physical_key.is_empty() {
+            self.key_event.text.as_str()
+        } else {
+            self.physical_key.as_str()
+        }
+        .to_ascii_lowercase();
+
         if self.key_event.modifiers.control && !self.key_event.modifiers.shift {
-            match self.key_event.text.as_str() {
+            match key.as_str() {
                 #[cfg(not(target_arch = "wasm32"))]
                 "c" => Some(StandardShortcut::Copy),
                 #[cfg(not(target_arch = "wasm32"))]
@@ -989,9 +1011,9 @@ impl InternalKeyEvent {
                 _ => None,
             }
         } else if self.key_event.modifiers.control && self.key_event.modifiers.shift {
-            match self.key_event.text.as_str() {
+            match key.as_str() {
                 #[cfg(not(target_os = "windows"))]
-                "z" | "Z" => Some(StandardShortcut::Redo),
+                "z" => Some(StandardShortcut::Redo),
                 _ => None,
             }
         } else {

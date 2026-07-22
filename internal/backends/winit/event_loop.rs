@@ -38,6 +38,60 @@ fn winit_touch_phase(phase: winit::event::TouchPhase) -> corelib::input::TouchPh
 use winit::event_loop::ControlFlow;
 use winit::window::ResizeDirection;
 
+/// Maps a physical key (its position on a standard US QWERTY keyboard) to its
+/// base character, independent of the active keyboard layout and CapsLock. This
+/// is used to resolve standard keyboard shortcuts (e.g. Ctrl+V) so they keep
+/// working on non-Latin layouts and with CapsLock enabled — the logical key
+/// used for text input is layout-dependent and unsuitable for that.
+///
+/// Returns an empty string for keys without a stable shortcut character.
+fn physical_key_base_char(physical: winit::keyboard::PhysicalKey) -> SharedString {
+    use winit::keyboard::{KeyCode, PhysicalKey};
+    let PhysicalKey::Code(code) = physical else {
+        return SharedString::new();
+    };
+    let s = match code {
+        KeyCode::KeyA => "a",
+        KeyCode::KeyB => "b",
+        KeyCode::KeyC => "c",
+        KeyCode::KeyD => "d",
+        KeyCode::KeyE => "e",
+        KeyCode::KeyF => "f",
+        KeyCode::KeyG => "g",
+        KeyCode::KeyH => "h",
+        KeyCode::KeyI => "i",
+        KeyCode::KeyJ => "j",
+        KeyCode::KeyK => "k",
+        KeyCode::KeyL => "l",
+        KeyCode::KeyM => "m",
+        KeyCode::KeyN => "n",
+        KeyCode::KeyO => "o",
+        KeyCode::KeyP => "p",
+        KeyCode::KeyQ => "q",
+        KeyCode::KeyR => "r",
+        KeyCode::KeyS => "s",
+        KeyCode::KeyT => "t",
+        KeyCode::KeyU => "u",
+        KeyCode::KeyV => "v",
+        KeyCode::KeyW => "w",
+        KeyCode::KeyX => "x",
+        KeyCode::KeyY => "y",
+        KeyCode::KeyZ => "z",
+        KeyCode::Digit0 => "0",
+        KeyCode::Digit1 => "1",
+        KeyCode::Digit2 => "2",
+        KeyCode::Digit3 => "3",
+        KeyCode::Digit4 => "4",
+        KeyCode::Digit5 => "5",
+        KeyCode::Digit6 => "6",
+        KeyCode::Digit7 => "7",
+        KeyCode::Digit8 => "8",
+        KeyCode::Digit9 => "9",
+        _ => return SharedString::new(),
+    };
+    s.into()
+}
+
 /// This enum captures run-time specific events that can be dispatched to the event loop in
 /// addition to the winit events.
 pub enum CustomEvent {
@@ -349,6 +403,10 @@ impl winit::application::ApplicationHandler<SlintEvent> for EventLoopState {
                 let event = corelib::input::InternalKeyEvent {
                     key_event,
                     event_type,
+                    // Layout- and CapsLock-independent character for the physical
+                    // key, so standard shortcuts (Ctrl+V, ...) resolve regardless
+                    // of the active keyboard layout. See InternalKeyEvent::shortcut.
+                    physical_key: physical_key_base_char(event.physical_key),
                     #[cfg(target_os = "windows")]
                     text_without_modifiers,
                     ..Default::default()
