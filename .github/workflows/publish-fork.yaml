@@ -110,7 +110,9 @@ jobs:
               shell: bash
               working-directory: api/node
               run: |
-                  pnpm exec napi create-npm-dirs --npm-dir . -c binaries.json
+                  # Default npm-dir → npm/<target>/package.json (scoped name,
+                  # repository + publishConfig inherited from the main manifest).
+                  pnpm exec napi create-npm-dirs -c binaries.json
                   ls -la npm/
             - uses: actions/download-artifact@v8
               with:
@@ -120,18 +122,9 @@ jobs:
               working-directory: api/node
               run: |
                   version=$(node -p "require('./package.json').version")
-                  repo="git+https://github.com/Forge-of-Apps/slint.git"
                   for t in linux-x64-gnu darwin-arm64 win32-x64-msvc; do
                       cp "dl/binary-$t/slint-ui.$t.node" "npm/$t/"
-                      # GitHub Packages links each package to a repo for permissions;
-                      # ensure the generated platform package.json carries it.
-                      node -e '
-                        const fs=require("fs"), p="npm/'"$t"'/package.json";
-                        const j=JSON.parse(fs.readFileSync(p));
-                        j.repository={type:"git",url:"'"$repo"'"};
-                        j.publishConfig={registry:"https://npm.pkg.github.com"};
-                        fs.writeFileSync(p, JSON.stringify(j,null,2));'
-                      echo "== npm/$t/package.json =="; cat "npm/$t/package.json"
+                      echo "== npm/$t =="; ls -la "npm/$t"
                   done
                   # Pin the main package's optionalDependencies to this version.
                   node -e '
